@@ -52,6 +52,8 @@ const apiBaseUrl = (
   process.env.NEXT_PUBLIC_API_BASE_URL ??
   (process.env.NODE_ENV === "development" ? "http://localhost:4000" : "https://h5p-backend-five.vercel.app")
 ).replace(/\/$/, "");
+const audioAccept = "audio/*,.mp3,.wav,.ogg,.m4a,.webm,.flac";
+const audioMaxBytes = 8 * 1024 * 1024;
 const interactionTypes: Array<{ value: InteractionType; label: string }> = [
   { value: "text", label: "Text" },
   { value: "multiple-choice", label: "Multiple choice" },
@@ -692,16 +694,49 @@ function AudioUrlInput({
   value: string;
   onChange: (value: string) => void;
 }) {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [selectedFileName, setSelectedFileName] = useState("");
+  const [fileError, setFileError] = useState("");
+  const [isReadingFile, setIsReadingFile] = useState(false);
+
+  function openFilePicker() {
+    setFileError("");
+    fileInputRef.current?.click();
+  }
+
   async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
     if (!file) return;
 
-    const dataUrl = await readFileAsDataUrl(file);
-    onChange(dataUrl);
-    event.target.value = "";
+    setFileError("");
+
+    try {
+      if (file.size > audioMaxBytes) {
+        throw new Error(`Audio file must be ${formatFileSize(audioMaxBytes)} or smaller.`);
+      }
+
+      const mime = audioMimeForFile(file);
+      if (!mime) {
+        throw new Error("Choose an MP3, WAV, OGG, M4A, WebM, or FLAC audio file.");
+      }
+
+      setIsReadingFile(true);
+      const dataUrl = await readFileAsAudioDataUrl(file, mime);
+      onChange(dataUrl);
+      setSelectedFileName(file.name);
+    } catch (cause) {
+      setSelectedFileName("");
+      setFileError(cause instanceof Error ? cause.message : "Failed to read audio file.");
+    } finally {
+      setIsReadingFile(false);
+      event.target.value = "";
+    }
   }
 
   const isEmbeddedAudio = value.startsWith("data:audio/");
+  const displayValue = isEmbeddedAudio
+    ? `Embedded: ${selectedFileName || "audio file"}`
+    : value;
 
   return (
     <div className="space-y-3">
@@ -709,33 +744,49 @@ function AudioUrlInput({
         <label className="block text-sm font-medium text-ink">
           {label}
           <input
-            value={isEmbeddedAudio ? "Embedded audio file" : value}
+            value={displayValue}
             readOnly={isEmbeddedAudio}
             onChange={(event) => onChange(event.target.value)}
             className="mt-2 h-10 w-full rounded-md border border-line px-3 text-sm outline-none focus:border-brand"
           />
         </label>
         <div className="flex items-center gap-2">
-          <label className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border border-line px-3 text-sm font-semibold text-ink hover:bg-panel">
+          <button
+            type="button"
+            onClick={openFilePicker}
+            disabled={isReadingFile}
+            className="inline-flex h-9 items-center gap-2 rounded-md border border-line px-3 text-sm font-semibold text-ink hover:bg-panel disabled:cursor-wait disabled:opacity-60"
+          >
             <Upload size={15} aria-hidden="true" />
-            Choose file
-            <input
-              type="file"
-              accept="audio/*,.mp3,.wav,.ogg,.m4a,.webm,.flac"
-              onChange={handleFileChange}
-              className="sr-only"
-            />
-          </label>
+            {isReadingFile ? "Loading" : "Choose file"}
+          </button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept={audioAccept}
+            onChange={handleFileChange}
+            className="hidden"
+          />
           {isEmbeddedAudio && (
             <button
               type="button"
-              onClick={() => onChange("")}
+              onClick={() => {
+                onChange("");
+                setSelectedFileName("");
+                setFileError("");
+              }}
               className="inline-flex h-9 items-center rounded-md border border-line px-3 text-sm font-semibold text-coral hover:bg-panel"
             >
               Clear
             </button>
           )}
         </div>
+        {isEmbeddedAudio && (
+          <p className="text-sm text-brand">
+            Ready: {selectedFileName || "audio file"} is embedded in this interaction.
+          </p>
+        )}
+        {fileError && <p className="text-sm text-coral">{fileError}</p>}
       </div>
       {value && (
         <audio controls src={value} className="h-10 w-full">
@@ -746,13 +797,32 @@ function AudioUrlInput({
   );
 }
 
-function readFileAsDataUrl(file: File) {
+function readFileAsAudioDataUrl(file: File, mime: string) {
   return new Promise<string>((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result));
     reader.onerror = () => reject(reader.error ?? new Error("Failed to read audio file"));
-    reader.readAsDataURL(file);
+    reader.readAsDataURL(file.slice(0, file.size, mime));
   });
+}
+
+function audioMimeForFile(file: File) {
+  const mime = file.type.toLowerCase();
+  if (mime.startsWith("audio/")) return mime;
+
+  const extension = file.name.toLowerCase().split(".").pop();
+  if (extension === "mp3") return "audio/mpeg";
+  if (extension === "wav") return "audio/wav";
+  if (extension === "ogg") return "audio/ogg";
+  if (extension === "m4a") return "audio/mp4";
+  if (extension === "webm") return "audio/webm";
+  if (extension === "flac") return "audio/flac";
+  return "";
+}
+
+function formatFileSize(bytes: number) {
+  if (bytes >= 1024 * 1024) return `${Math.round((bytes / 1024 / 1024) * 10) / 10} MB`;
+  return `${Math.round(bytes / 1024)} KB`;
 }
 
 function RecorderPreview() {
