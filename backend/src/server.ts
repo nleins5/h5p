@@ -11,11 +11,28 @@ const __dirname = path.dirname(__filename);
 const projectRoot = path.resolve(__dirname, "..");
 const port = Number(process.env.PORT ?? 4000);
 const app = express();
-const generator = new H5PGenerator();
+const tempRoot = process.env.VERCEL ? "/tmp/h5p-generator" : path.resolve(projectRoot, "temp");
+const generator = new H5PGenerator(tempRoot);
+const allowedOrigins = [
+  process.env.FRONTEND_ORIGIN,
+  "http://localhost:3000",
+  "https://frontend-eight-lemon-78.vercel.app"
+].filter(Boolean);
 
-app.use(cors({ origin: process.env.FRONTEND_ORIGIN ?? "http://localhost:3000" }));
+app.use(
+  cors({
+    origin(origin, callback) {
+      if (!origin || allowedOrigins.includes(origin) || origin.endsWith(".vercel.app")) {
+        callback(null, true);
+        return;
+      }
+
+      callback(new Error("Not allowed by CORS"));
+    }
+  })
+);
 app.use(express.json({ limit: "2mb" }));
-app.use("/downloads", express.static(path.resolve(projectRoot, "temp", "outputs")));
+app.use("/downloads", express.static(path.resolve(tempRoot, "outputs")));
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true });

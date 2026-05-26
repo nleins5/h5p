@@ -29,7 +29,7 @@ export interface GeneratedPackage {
 export class H5PGenerator {
   private readonly tempRoot: string;
 
-  constructor(tempRoot = path.resolve(projectRoot, "temp")) {
+  constructor(tempRoot = process.env.VERCEL ? "/tmp/h5p-generator" : path.resolve(projectRoot, "temp")) {
     this.tempRoot = tempRoot;
   }
 
