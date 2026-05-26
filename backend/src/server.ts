@@ -35,6 +35,76 @@ app.use(
 app.use(express.json({ limit: "2mb" }));
 app.use("/downloads", express.static(path.resolve(tempRoot, "outputs")));
 
+app.get("/", (_req, res) => {
+  res.type("html").send(`<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>H5P Backend</title>
+    <style>
+      body {
+        margin: 0;
+        min-height: 100vh;
+        display: grid;
+        place-items: center;
+        background: #eef2f6;
+        color: #17212f;
+        font-family: Arial, Helvetica, sans-serif;
+      }
+
+      main {
+        width: min(680px, calc(100vw - 32px));
+        border: 1px solid #d8dee8;
+        border-radius: 8px;
+        background: #fff;
+        padding: 28px;
+        box-shadow: 0 18px 50px rgba(23, 33, 47, 0.11);
+      }
+
+      h1 {
+        margin: 0 0 8px;
+        font-size: 24px;
+      }
+
+      p {
+        margin: 0 0 18px;
+        color: #526173;
+        line-height: 1.5;
+      }
+
+      code {
+        display: inline-block;
+        border-radius: 6px;
+        background: #f7f8fb;
+        padding: 4px 7px;
+        color: #0f7b6c;
+      }
+
+      ul {
+        margin: 0;
+        padding-left: 20px;
+      }
+
+      li {
+        margin: 10px 0;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>H5P Backend is running</h1>
+      <p>This service generates H5P interactive video packages. Use the frontend editor for the visual app.</p>
+      <ul>
+        <li>Health check: <code>GET /health</code></li>
+        <li>Generate package: <code>POST /api/generate-h5p</code></li>
+        <li>Frontend: <a href="https://frontend-eight-lemon-78.vercel.app">https://frontend-eight-lemon-78.vercel.app</a></li>
+      </ul>
+    </main>
+  </body>
+</html>`);
+});
+
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
 });
