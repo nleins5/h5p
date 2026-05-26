@@ -48,7 +48,10 @@ interface Interaction {
   positioning: Positioning;
 }
 
-const apiBaseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "";
+const apiBaseUrl = (
+  process.env.NEXT_PUBLIC_API_BASE_URL ??
+  (process.env.NODE_ENV === "development" ? "http://localhost:4000" : "https://h5p-backend-five.vercel.app")
+).replace(/\/$/, "");
 const interactionTypes: Array<{ value: InteractionType; label: string }> = [
   { value: "text", label: "Text" },
   { value: "multiple-choice", label: "Multiple choice" },
@@ -143,6 +146,13 @@ export default function Home() {
   async function generateH5P() {
     setError("");
     setDownloadUrl("");
+
+    const validationError = validateGeneratePayload({ youtubeUrl, title, interactions });
+    if (validationError) {
+      setError(validationError);
+      return;
+    }
+
     setIsGenerating(true);
 
     try {
@@ -156,9 +166,9 @@ export default function Home() {
 
       if (!response.ok) {
         const payload = contentType.includes("application/json")
-          ? ((await response.json()) as { error?: string })
+          ? ((await response.json()) as { error?: string; issues?: unknown })
           : { error: "Generation failed" };
-        throw new Error(payload.error ?? "Generation failed");
+        throw new Error(formatBackendError(payload));
       }
 
       if (contentType.includes("application/json")) {
@@ -875,6 +885,89 @@ function defaultContent(type: InteractionType): Record<string, unknown> {
     default:
       return { text: "Helpful context for this moment." };
   }
+}
+
+function validateGeneratePayload(input: {
+  youtubeUrl: string;
+  title: string;
+  interactions: Interaction[];
+}) {
+  if (!isValidUrl(input.youtubeUrl)) return "Enter a valid YouTube URL.";
+  if (!input.title.trim()) return "Enter a title before generating.";
+
+  for (const interaction of input.interactions) {
+    const label = `${typeLabel(interaction.type)} at ${formatTime(interaction.time)}`;
+    const content = interaction.content;
+
+    if (interaction.type === "text" && !String(content.text ?? "").trim()) {
+      return `${label} needs text.`;
+    }
+
+    if (interaction.type === "multiple-choice") {
+      const options = normalizeStringList(content.options).filter((option) => option.trim());
+      if (!String(content.question ?? "").trim()) return `${label} needs a question.`;
+      if (options.length < 2) return `${label} needs at least two options.`;
+    }
+
+    if (interaction.type === "image") {
+      if (!isValidUrl(String(content.url ?? ""))) return `${label} needs a valid image URL.`;
+    }
+
+    if (interaction.type === "link") {
+      if (!String(content.label ?? "").trim()) return `${label} needs a label.`;
+      if (!isValidUrl(String(content.url ?? ""))) return `${label} needs a valid link URL.`;
+    }
+
+    if (interaction.type === "fill-blank") {
+      const text = String(content.text ?? "");
+      if (!text.trim()) return `${label} needs blank text.`;
+      if (!/\*[^*]+\*/.test(text)) return `${label} needs an answer wrapped in *asterisks*.`;
+    }
+
+    if (interaction.type === "jump-to-time") {
+      if (!String(content.label ?? "").trim()) return `${label} needs a label.`;
+      if (!Number.isFinite(Number(content.targetTime))) return `${label} needs a target time.`;
+    }
+
+    if (interaction.type === "bookmark" && !String(content.label ?? "").trim()) {
+      return `${label} needs a bookmark label.`;
+    }
+
+    if (interaction.type === "listen-choice") {
+      const options = normalizeAudioOptions(content.options);
+      if (!String(content.question ?? "").trim()) return `${label} needs a question.`;
+      if (options.length < 2) return `${label} needs at least two audio options.`;
+      const missingIndex = options.findIndex((option) => !option.audioUrl.trim());
+      if (missingIndex >= 0) return `${label} option ${missingIndex + 1} needs an audio file or URL.`;
+    }
+
+    if (interaction.type === "read-aloud") {
+      if (!String(content.prompt ?? "").trim()) return `${label} needs a prompt.`;
+      if (!String(content.word ?? "").trim()) return `${label} needs a word or phrase.`;
+    }
+  }
+
+  return "";
+}
+
+function isValidUrl(value: string) {
+  try {
+    const parsed = new URL(value);
+    return parsed.protocol === "http:" || parsed.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+function formatBackendError(payload: { error?: string; issues?: unknown }) {
+  if (!payload.issues || typeof payload.issues !== "object") {
+    return payload.error ?? "Generation failed";
+  }
+
+  const issues = payload.issues as { fieldErrors?: Record<string, string[]>; formErrors?: string[] };
+  const firstFieldError = Object.values(issues.fieldErrors ?? {}).flat()[0];
+  const firstFormError = issues.formErrors?.[0];
+  return firstFieldError ?? firstFormError ?? payload.error ?? "Generation failed";
 }
 
 function typeLabel(type: InteractionType) {
