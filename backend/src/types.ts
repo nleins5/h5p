@@ -5,7 +5,9 @@ export type InteractionType =
   | "link"
   | "fill-blank"
   | "jump-to-time"
-  | "bookmark";
+  | "bookmark"
+  | "listen-choice"
+  | "read-aloud";
 
 export interface Positioning {
   x: number;
@@ -48,6 +50,25 @@ export interface BookmarkContent {
   label: string;
 }
 
+export interface AudioChoiceOption {
+  label: string;
+  audioUrl: string;
+}
+
+export interface ListenChoiceContent {
+  question: string;
+  promptAudioUrl?: string;
+  options: AudioChoiceOption[];
+  correctIndex: number;
+}
+
+export interface ReadAloudContent {
+  prompt: string;
+  word: string;
+  acceptedAnswers: string[];
+  inputLanguage: string;
+}
+
 export interface Interaction {
   id?: string;
   time: number;
@@ -59,7 +80,9 @@ export interface Interaction {
     | LinkContent
     | FillBlankContent
     | JumpToTimeContent
-    | BookmarkContent;
+    | BookmarkContent
+    | ListenChoiceContent
+    | ReadAloudContent;
   positioning: Positioning;
 }
 

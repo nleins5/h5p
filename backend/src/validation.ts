@@ -18,7 +18,9 @@ const interactionSchema = z.object({
     "link",
     "fill-blank",
     "jump-to-time",
-    "bookmark"
+    "bookmark",
+    "listen-choice",
+    "read-aloud"
   ]),
   content: z.record(z.unknown()),
   positioning: positioningSchema

@@ -10,8 +10,10 @@ import type {
   ImageContent,
   Interaction,
   JumpToTimeContent,
+  ListenChoiceContent,
   LinkContent,
   MultipleChoiceContent,
+  ReadAloudContent,
   TextContent
 } from "./types.js";
 
@@ -78,7 +80,16 @@ export class H5PGenerator {
         { machineName: "H5P.MultiChoice", majorVersion: 1, minorVersion: 16 },
         { machineName: "H5P.Image", majorVersion: 1, minorVersion: 1 },
         { machineName: "H5P.Link", majorVersion: 1, minorVersion: 3 },
-        { machineName: "H5P.Blanks", majorVersion: 1, minorVersion: 14 }
+        { machineName: "H5P.Blanks", majorVersion: 1, minorVersion: 14 },
+        { machineName: "H5P.MultiMediaChoice", majorVersion: 0, minorVersion: 3 },
+        { machineName: "H5P.Audio", majorVersion: 1, minorVersion: 5 },
+        { machineName: "H5P.AudioRecorder", majorVersion: 1, minorVersion: 0 },
+        { machineName: "H5P.Question", majorVersion: 1, minorVersion: 5 },
+        { machineName: "H5P.JoubelUI", majorVersion: 1, minorVersion: 3 },
+        { machineName: "H5P.MaterialDesignIcons", majorVersion: 1, minorVersion: 0 },
+        { machineName: "H5P.Components", majorVersion: 1, minorVersion: 0 },
+        { machineName: "H5P.FontIcons", majorVersion: 1, minorVersion: 0 },
+        { machineName: "FontAwesome", majorVersion: 4, minorVersion: 5 }
       ]
     };
   }
@@ -257,10 +268,144 @@ export class H5PGenerator {
           }
         };
       }
+      case "listen-choice": {
+        const content = item.content as ListenChoiceContent;
+        return {
+          ...base,
+          action: {
+            library: "H5P.MultiMediaChoice 0.3",
+            params: {
+              media: content.promptAudioUrl
+                ? { type: createAudioContent(content.promptAudioUrl, "Prompt audio") }
+                : {},
+              question: content.question,
+              options: content.options.map((option, index) => ({
+                media: createAudioContent(option.audioUrl, option.label || `Option ${index + 1}`),
+                correct: index === content.correctIndex
+              })),
+              behaviour: {
+                enableRetry: true,
+                enableSolutionsButton: true,
+                confirmCheckDialog: false,
+                confirmRetryDialog: false,
+                singlePoint: true,
+                showSolutionsRequiresInput: true,
+                questionType: "single",
+                aspectRatio: "auto",
+                maxAlternativesPerRow: "2",
+                passPercentage: 100
+              },
+              l10n: createMultimediaChoiceL10n()
+            },
+            subContentId: item.id ?? uuidv4(),
+            metadata: { title: "Listen and Choose" }
+          }
+        };
+      }
+      case "read-aloud": {
+        const content = item.content as ReadAloudContent;
+        return {
+          ...base,
+          action: {
+            library: "H5P.AudioRecorder 1.0",
+            params: {
+              title: `${content.prompt}\n\n${content.word}`.trim(),
+              l10n: createAudioRecorderL10n()
+            },
+            subContentId: item.id ?? uuidv4(),
+            metadata: { title: "Read Aloud" }
+          }
+        };
+      }
       default:
         throw new Error(`Unsupported interaction type: ${item.type}`);
     }
   }
+}
+
+function createAudioContent(audioUrl: string, title: string) {
+  return {
+    library: "H5P.Audio 1.5",
+    params: {
+      files: [
+        {
+          path: audioUrl,
+          mime: audioMimeType(audioUrl)
+        }
+      ],
+      playerMode: "minimalistic",
+      fitToWrapper: true,
+      controls: true,
+      contentName: title,
+      audioNotSupported: "Your browser does not support this audio"
+    },
+    subContentId: uuidv4(),
+    metadata: { title }
+  };
+}
+
+function audioMimeType(audioUrl: string) {
+  const lowerUrl = audioUrl.toLowerCase();
+  if (lowerUrl.includes(".wav")) return "audio/wav";
+  if (lowerUrl.includes(".ogg")) return "audio/ogg";
+  if (lowerUrl.includes(".m4a")) return "audio/mp4";
+  return "audio/mpeg";
+}
+
+function createMultimediaChoiceL10n() {
+  return {
+    checkAnswerButtonText: "Check",
+    submitAnswerButtonText: "Submit",
+    checkAnswer: "Check the answers.",
+    showSolutionButtonText: "Show solution",
+    showSolution: "Show the solution.",
+    correctAnswer: "Correct answer",
+    wrongAnswer: "Wrong answer",
+    shouldCheck: "Should have been checked",
+    shouldNotCheck: "Should not have been checked",
+    noAnswer: "Please answer before viewing the solution",
+    retryText: "Retry",
+    retry: "Retry the task.",
+    result: "You got :num out of :total points",
+    confirmCheck: {
+      header: "Finish?",
+      body: "Are you sure you want to finish?",
+      cancelLabel: "Cancel",
+      confirmLabel: "Finish"
+    },
+    confirmRetry: {
+      header: "Retry?",
+      body: "Are you sure you wish to retry?",
+      cancelLabel: "Cancel",
+      confirmLabel: "Retry"
+    },
+    missingAltText: "Alt text missing",
+    closeModalText: "Close modal"
+  };
+}
+
+function createAudioRecorderL10n() {
+  return {
+    recordAnswer: "Record",
+    pause: "Pause",
+    continue: "Continue",
+    download: "Download",
+    done: "Done",
+    retry: "Retry",
+    microphoneNotSupported: "Microphone not supported. Make sure you are using a browser that allows microphone recording.",
+    microphoneInaccessible: "Microphone is not accessible. Make sure that the browser microphone is enabled.",
+    insecureNotAllowed: "Access to microphone is not allowed because this page is not served using HTTPS.",
+    statusReadyToRecord: "Press a button below to record your answer.",
+    statusRecording: "Recording...",
+    statusPaused: "Recording paused.",
+    statusFinishedRecording: "You have successfully recorded your answer! Listen to the recording below.",
+    downloadRecording: "Download this recording or retry.",
+    retryDialogHeaderText: "Retry recording?",
+    retryDialogBodyText: "By pressing Retry you will lose your current recording.",
+    retryDialogConfirmText: "Retry",
+    retryDialogCancelText: "Cancel",
+    statusCantCreateTheAudioFile: "Can't create the audio file."
+  };
 }
 
 function uuidv4() {

@@ -3,7 +3,21 @@
 import dynamic from "next/dynamic";
 import { ChangeEvent, MouseEvent, useMemo, useRef, useState } from "react";
 import type ReactPlayerType from "react-player";
-import { Download, Grip, Link2, ListPlus, Move, Plus, Trash2, Type, Upload } from "lucide-react";
+import {
+  Download,
+  Grip,
+  Headphones,
+  ImageIcon,
+  Link2,
+  ListPlus,
+  Mic,
+  Move,
+  Plus,
+  Square,
+  Trash2,
+  Type,
+  Upload
+} from "lucide-react";
 
 const ReactPlayer = dynamic(() => import("react-player/youtube"), { ssr: false });
 
@@ -14,7 +28,9 @@ type InteractionType =
   | "link"
   | "fill-blank"
   | "jump-to-time"
-  | "bookmark";
+  | "bookmark"
+  | "listen-choice"
+  | "read-aloud";
 
 interface Positioning {
   x: number;
@@ -40,8 +56,15 @@ const interactionTypes: Array<{ value: InteractionType; label: string }> = [
   { value: "link", label: "Link" },
   { value: "fill-blank", label: "Fill blank" },
   { value: "jump-to-time", label: "Jump" },
-  { value: "bookmark", label: "Bookmark" }
+  { value: "bookmark", label: "Bookmark" },
+  { value: "listen-choice", label: "Listen & choose" },
+  { value: "read-aloud", label: "Read aloud" }
 ];
+
+interface AudioChoiceOption {
+  label: string;
+  audioUrl: string;
+}
 
 export default function Home() {
   const playerRef = useRef<ReactPlayerType | null>(null);
@@ -357,7 +380,7 @@ function InteractionEditor({
     <div className="space-y-4">
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2">
-          {interaction.type === "link" ? <Link2 size={18} /> : <Type size={18} />}
+          {editorIcon(interaction.type)}
           <h2 className="font-semibold text-ink">{typeLabel(interaction.type)}</h2>
         </div>
         <button
@@ -492,8 +515,216 @@ function ContentFields({
     return <TextInput label="Bookmark label" value={String(content.label ?? "")} onChange={(value) => onUpdateContent(interaction.id, "label", value)} />;
   }
 
+  if (interaction.type === "listen-choice") {
+    const options = normalizeAudioOptions(content.options);
+    const correctIndex = clamp(Number(content.correctIndex ?? 0), 0, Math.max(options.length - 1, 0));
+
+    return (
+      <div className="space-y-4">
+        <TextInput
+          label="Question"
+          value={String(content.question ?? "")}
+          onChange={(value) => onUpdateContent(interaction.id, "question", value)}
+        />
+        <AudioUrlInput
+          label="Prompt audio URL"
+          value={String(content.promptAudioUrl ?? "")}
+          onChange={(value) => onUpdateContent(interaction.id, "promptAudioUrl", value)}
+        />
+        <div className="space-y-3">
+          {options.map((option, index) => (
+            <div key={index} className="rounded-md border border-line p-3">
+              <div className="mb-3 flex items-center justify-between">
+                <span className="text-sm font-semibold text-ink">Option {index + 1}</span>
+                {options.length > 2 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const next = options.filter((_item, optionIndex) => optionIndex !== index);
+                      onUpdateContent(interaction.id, "options", next);
+                      onUpdateContent(interaction.id, "correctIndex", clamp(correctIndex, 0, next.length - 1));
+                    }}
+                    className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-line text-coral hover:bg-panel"
+                    title="Remove option"
+                  >
+                    <Trash2 size={15} aria-hidden="true" />
+                  </button>
+                )}
+              </div>
+              <div className="space-y-3">
+                <TextInput
+                  label="Label"
+                  value={option.label}
+                  onChange={(value) => {
+                    const next = replaceAudioOption(options, index, { label: value });
+                    onUpdateContent(interaction.id, "options", next);
+                  }}
+                />
+                <AudioUrlInput
+                  label="Audio URL"
+                  value={option.audioUrl}
+                  onChange={(value) => {
+                    const next = replaceAudioOption(options, index, { audioUrl: value });
+                    onUpdateContent(interaction.id, "options", next);
+                  }}
+                />
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() =>
+              onUpdateContent(interaction.id, "options", [
+                ...options,
+                { label: `Option ${options.length + 1}`, audioUrl: "" }
+              ])
+            }
+            className="inline-flex h-9 items-center gap-2 rounded-md border border-line px-3 text-sm font-semibold text-ink hover:bg-panel"
+          >
+            <Plus size={16} aria-hidden="true" />
+            Add option
+          </button>
+        </div>
+        <label className="block text-sm font-medium text-ink">
+          Correct option
+          <select
+            value={correctIndex}
+            onChange={(event) => onUpdateContent(interaction.id, "correctIndex", Number(event.target.value))}
+            className="mt-2 h-10 w-full rounded-md border border-line bg-white px-3 text-sm outline-none focus:border-brand"
+          >
+            {options.map((option, index) => (
+              <option key={index} value={index}>
+                {option.label || `Option ${index + 1}`}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+    );
+  }
+
+  if (interaction.type === "read-aloud") {
+    const acceptedAnswers = normalizeStringList(content.acceptedAnswers);
+
+    return (
+      <div className="space-y-3">
+        <TextInput
+          label="Prompt"
+          value={String(content.prompt ?? "")}
+          onChange={(value) => onUpdateContent(interaction.id, "prompt", value)}
+        />
+        <TextInput
+          label="Word or phrase"
+          value={String(content.word ?? "")}
+          onChange={(value) => onUpdateContent(interaction.id, "word", value)}
+        />
+        <TextInput
+          label="Accepted answer"
+          value={acceptedAnswers[0] ?? ""}
+          onChange={(value) => onUpdateContent(interaction.id, "acceptedAnswers", [value])}
+        />
+        <TextInput
+          label="Input language"
+          value={String(content.inputLanguage ?? "vi-VN")}
+          onChange={(value) => onUpdateContent(interaction.id, "inputLanguage", value)}
+        />
+        <RecorderPreview />
+      </div>
+    );
+  }
+
   const key = interaction.type === "fill-blank" ? "text" : "text";
   return <TextArea label={interaction.type === "fill-blank" ? "Blank text" : "Text"} value={String(content[key] ?? "")} onChange={(value) => onUpdateContent(interaction.id, key, value)} />;
+}
+
+function AudioUrlInput({
+  label,
+  value,
+  onChange
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <TextInput label={label} value={value} onChange={onChange} />
+      {value && (
+        <audio controls src={value} className="h-10 w-full">
+          <track kind="captions" />
+        </audio>
+      )}
+    </div>
+  );
+}
+
+function RecorderPreview() {
+  const recorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const [recordingUrl, setRecordingUrl] = useState("");
+  const [isRecording, setIsRecording] = useState(false);
+  const [recordingError, setRecordingError] = useState("");
+
+  async function startRecording() {
+    setRecordingError("");
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      chunksRef.current = [];
+      const recorder = new MediaRecorder(stream);
+      recorderRef.current = recorder;
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          chunksRef.current.push(event.data);
+        }
+      };
+
+      recorder.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
+        if (recordingUrl) {
+          URL.revokeObjectURL(recordingUrl);
+        }
+        setRecordingUrl(URL.createObjectURL(blob));
+        stream.getTracks().forEach((track) => track.stop());
+      };
+
+      recorder.start();
+      setIsRecording(true);
+    } catch (cause) {
+      setRecordingError(cause instanceof Error ? cause.message : "Microphone unavailable");
+    }
+  }
+
+  function stopRecording() {
+    recorderRef.current?.stop();
+    setIsRecording(false);
+  }
+
+  return (
+    <div className="rounded-md border border-line p-3">
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={isRecording ? stopRecording : startRecording}
+          className={`inline-flex h-9 items-center gap-2 rounded-md px-3 text-sm font-semibold text-white ${
+            isRecording ? "bg-coral hover:bg-[#be433b]" : "bg-brand hover:bg-[#0b685c]"
+          }`}
+        >
+          {isRecording ? <Square size={15} aria-hidden="true" /> : <Mic size={16} aria-hidden="true" />}
+          {isRecording ? "Stop" : "Record"}
+        </button>
+        {recordingUrl && (
+          <audio controls src={recordingUrl} className="h-9 min-w-0 flex-1">
+            <track kind="captions" />
+          </audio>
+        )}
+      </div>
+      {recordingError && <p className="mt-2 text-sm text-coral">{recordingError}</p>}
+    </div>
+  );
 }
 
 function TextInput({
@@ -572,6 +803,24 @@ function defaultContent(type: InteractionType): Record<string, unknown> {
       return { label: "Jump ahead", targetTime: 30 };
     case "bookmark":
       return { label: "Important moment" };
+    case "listen-choice":
+      return {
+        question: "Nghe âm và chọn đáp án đúng",
+        promptAudioUrl: "",
+        options: [
+          { label: "Âm A", audioUrl: "" },
+          { label: "Âm B", audioUrl: "" },
+          { label: "Âm C", audioUrl: "" }
+        ],
+        correctIndex: 0
+      };
+    case "read-aloud":
+      return {
+        prompt: "Đọc từ sau",
+        word: "xin chào",
+        acceptedAnswers: ["xin chào"],
+        inputLanguage: "vi-VN"
+      };
     default:
       return { text: "Helpful context for this moment." };
   }
@@ -579,6 +828,46 @@ function defaultContent(type: InteractionType): Record<string, unknown> {
 
 function typeLabel(type: InteractionType) {
   return interactionTypes.find((item) => item.value === type)?.label ?? type;
+}
+
+function editorIcon(type: InteractionType) {
+  if (type === "link") return <Link2 size={18} />;
+  if (type === "listen-choice") return <Headphones size={18} />;
+  if (type === "read-aloud") return <Mic size={18} />;
+  if (type === "image") return <ImageIcon size={18} />;
+  return <Type size={18} />;
+}
+
+function normalizeAudioOptions(value: unknown): AudioChoiceOption[] {
+  if (!Array.isArray(value)) {
+    return [
+      { label: "Option 1", audioUrl: "" },
+      { label: "Option 2", audioUrl: "" }
+    ];
+  }
+
+  const options = value.map((item, index) => {
+    if (typeof item !== "object" || item === null) {
+      return { label: `Option ${index + 1}`, audioUrl: "" };
+    }
+
+    const record = item as Record<string, unknown>;
+    return {
+      label: String(record.label ?? `Option ${index + 1}`),
+      audioUrl: String(record.audioUrl ?? "")
+    };
+  });
+
+  return options.length >= 2 ? options : [...options, { label: `Option ${options.length + 1}`, audioUrl: "" }];
+}
+
+function replaceAudioOption(options: AudioChoiceOption[], index: number, patch: Partial<AudioChoiceOption>) {
+  return options.map((option, optionIndex) => (optionIndex === index ? { ...option, ...patch } : option));
+}
+
+function normalizeStringList(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item));
 }
 
 function formatTime(value: number) {
