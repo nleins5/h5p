@@ -1,5 +1,6 @@
 import cors from "cors";
 import express from "express";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { H5PGenerator } from "./h5pGenerator.js";
@@ -51,6 +52,17 @@ app.post("/api/generate-h5p", async (req, res, next) => {
 
   try {
     const result = await generator.generate(parsed.data as unknown as GenerateH5PRequest);
+
+    if (process.env.VERCEL) {
+      res.download(result.filePath, result.fileName, async (error) => {
+        await rm(result.filePath, { force: true });
+        if (error && !res.headersSent) {
+          next(error);
+        }
+      });
+      return;
+    }
+
     const protocol = String(req.get("x-forwarded-proto") ?? req.protocol).split(",")[0];
     res.status(201).json({
       ...result,
