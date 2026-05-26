@@ -51,9 +51,10 @@ app.post("/api/generate-h5p", async (req, res, next) => {
 
   try {
     const result = await generator.generate(parsed.data as unknown as GenerateH5PRequest);
+    const protocol = String(req.get("x-forwarded-proto") ?? req.protocol).split(",")[0];
     res.status(201).json({
       ...result,
-      downloadUrl: `${req.protocol}://${req.get("host")}${result.downloadUrl}`
+      downloadUrl: `${protocol}://${req.get("host")}${result.downloadUrl}`
     });
   } catch (error) {
     next(error);
