@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { ChangeEvent, MouseEvent, useMemo, useRef, useState } from "react";
+import { ChangeEvent, PointerEvent, useMemo, useRef, useState } from "react";
 import type ReactPlayerType from "react-player";
 import {
   Download,
@@ -132,15 +132,48 @@ export default function Home() {
     playerRef.current?.seekTo(nextTime, "seconds");
   }
 
-  function handleDrag(id: string, event: MouseEvent<HTMLButtonElement>) {
+  function handleDragStart(id: string, positioning: Positioning, event: PointerEvent<HTMLButtonElement>) {
     if (!stageRef.current) return;
-    const rect = stageRef.current.getBoundingClientRect();
-    const x = ((event.clientX - rect.left) / rect.width) * 100;
-    const y = ((event.clientY - rect.top) / rect.height) * 100;
-    updatePosition(id, {
-      x: clamp(Math.round(x), 0, 95),
-      y: clamp(Math.round(y), 0, 95)
-    });
+    event.preventDefault();
+    event.stopPropagation();
+    setSelectedId(id);
+
+    const stageRect = stageRef.current.getBoundingClientRect();
+    const markerRect = event.currentTarget.getBoundingClientRect();
+    const grabOffsetX = event.clientX - markerRect.left;
+    const grabOffsetY = event.clientY - markerRect.top;
+    const pointerId = event.pointerId;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.userSelect = "none";
+
+    const moveMarker = (clientX: number, clientY: number) => {
+      const nextX = ((clientX - stageRect.left - grabOffsetX) / stageRect.width) * 100;
+      const nextY = ((clientY - stageRect.top - grabOffsetY) / stageRect.height) * 100;
+
+      updatePosition(id, {
+        x: round(clamp(nextX, 0, 100 - positioning.width)),
+        y: round(clamp(nextY, 0, 100 - positioning.height))
+      });
+    };
+
+    const handlePointerMove = (moveEvent: globalThis.PointerEvent) => {
+      if (moveEvent.pointerId !== pointerId) return;
+      moveEvent.preventDefault();
+      moveMarker(moveEvent.clientX, moveEvent.clientY);
+    };
+
+    const stopDragging = (upEvent: globalThis.PointerEvent) => {
+      if (upEvent.pointerId !== pointerId) return;
+      document.body.style.userSelect = previousUserSelect;
+      window.removeEventListener("pointermove", handlePointerMove);
+      window.removeEventListener("pointerup", stopDragging);
+      window.removeEventListener("pointercancel", stopDragging);
+    };
+
+    moveMarker(event.clientX, event.clientY);
+    window.addEventListener("pointermove", handlePointerMove);
+    window.addEventListener("pointerup", stopDragging);
+    window.addEventListener("pointercancel", stopDragging);
   }
 
   async function generateH5P() {
@@ -251,10 +284,11 @@ export default function Home() {
                 <button
                   key={item.id}
                   type="button"
-                  onMouseDown={(event) => handleDrag(item.id, event)}
+                  onPointerDown={(event) => handleDragStart(item.id, item.positioning, event)}
                   onClick={() => setSelectedId(item.id)}
-                  title="Move interaction"
-                  className={`absolute flex items-center justify-center rounded-md border-2 bg-white/90 text-ink shadow-sm transition ${
+                  title="Drag to move interaction"
+                  aria-label={`${typeLabel(item.type)} interaction at ${formatTime(item.time)}`}
+                  className={`absolute flex touch-none select-none items-center justify-center rounded-md border-2 bg-white/90 text-ink shadow-sm transition ${
                     selectedInteraction?.id === item.id ? "border-coral" : "border-brand"
                   }`}
                   style={{
