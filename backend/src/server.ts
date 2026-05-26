@@ -1,0 +1,53 @@
+import cors from "cors";
+import express from "express";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { H5PGenerator } from "./h5pGenerator.js";
+import type { GenerateH5PRequest } from "./types.js";
+import { generateH5PSchema } from "./validation.js";
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const projectRoot = path.resolve(__dirname, "..");
+const port = Number(process.env.PORT ?? 4000);
+const app = express();
+const generator = new H5PGenerator();
+
+app.use(cors({ origin: process.env.FRONTEND_ORIGIN ?? "http://localhost:3000" }));
+app.use(express.json({ limit: "2mb" }));
+app.use("/downloads", express.static(path.resolve(projectRoot, "temp", "outputs")));
+
+app.get("/health", (_req, res) => {
+  res.json({ ok: true });
+});
+
+app.post("/api/generate-h5p", async (req, res, next) => {
+  const parsed = generateH5PSchema.safeParse(req.body);
+
+  if (!parsed.success) {
+    res.status(400).json({
+      error: "Invalid request body",
+      issues: parsed.error.flatten()
+    });
+    return;
+  }
+
+  try {
+    const result = await generator.generate(parsed.data as unknown as GenerateH5PRequest);
+    res.status(201).json({
+      ...result,
+      downloadUrl: `${req.protocol}://${req.get("host")}${result.downloadUrl}`
+    });
+  } catch (error) {
+    next(error);
+  }
+});
+
+app.use((error: unknown, _req: express.Request, res: express.Response, _next: express.NextFunction) => {
+  console.error(error);
+  res.status(500).json({ error: "Failed to generate H5P package" });
+});
+
+app.listen(port, () => {
+  console.log(`H5P backend listening on http://localhost:${port}`);
+});
