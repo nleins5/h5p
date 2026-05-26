@@ -36,11 +36,42 @@ export interface GenerateH5PRequest {
 
 export function createH5PBuffer(input: GenerateH5PRequest) {
   const zip = new AdmZip();
+  const packageInput = cloneInput(input);
 
-  zip.addFile("h5p.json", Buffer.from(`${JSON.stringify(createManifest(input.title), null, 2)}\n`));
-  zip.addFile("content/content.json", Buffer.from(`${JSON.stringify(createContent(input), null, 2)}\n`));
+  embedAudioDataUrls(packageInput.interactions, zip);
+  zip.addFile("h5p.json", Buffer.from(`${JSON.stringify(createManifest(packageInput.title), null, 2)}\n`));
+  zip.addFile("content/content.json", Buffer.from(`${JSON.stringify(createContent(packageInput), null, 2)}\n`));
 
   return zip.toBuffer();
+}
+
+function cloneInput(input: GenerateH5PRequest): GenerateH5PRequest {
+  return JSON.parse(JSON.stringify(input)) as GenerateH5PRequest;
+}
+
+function embedAudioDataUrls(interactions: Interaction[], zip: AdmZip) {
+  for (const interaction of interactions) {
+    if (interaction.type !== "listen-choice") continue;
+
+    const promptAudioUrl = String(interaction.content.promptAudioUrl ?? "");
+    const promptAudio = resolveAudioDataUrl(promptAudioUrl);
+
+    if (promptAudio) {
+      const filename = `audios/${randomUUID()}${promptAudio.extension}`;
+      zip.addFile(`content/${filename}`, promptAudio.buffer);
+      interaction.content.promptAudioUrl = filename;
+    }
+
+    const options = normalizeAudioOptions(interaction.content.options);
+    interaction.content.options = options.map((option) => {
+      const audio = resolveAudioDataUrl(option.audioUrl);
+      if (!audio) return option;
+
+      const filename = `audios/${randomUUID()}${audio.extension}`;
+      zip.addFile(`content/${filename}`, audio.buffer);
+      return { ...option, audioUrl: filename };
+    });
+  }
 }
 
 function createManifest(title: string) {
@@ -308,65 +339,93 @@ function createAudioContent(audioUrl: string, title: string) {
 
 function audioMimeType(audioUrl: string) {
   const lowerUrl = audioUrl.toLowerCase();
+  if (lowerUrl.startsWith("data:audio/wav")) return "audio/wav";
+  if (lowerUrl.startsWith("data:audio/ogg")) return "audio/ogg";
+  if (lowerUrl.startsWith("data:audio/mp4") || lowerUrl.startsWith("data:audio/m4a")) return "audio/mp4";
+  if (lowerUrl.startsWith("data:audio/webm")) return "audio/webm";
+  if (lowerUrl.startsWith("data:audio/flac")) return "audio/flac";
+  if (lowerUrl.startsWith("data:audio/mpeg") || lowerUrl.startsWith("data:audio/mp3")) return "audio/mpeg";
   if (lowerUrl.includes(".wav")) return "audio/wav";
   if (lowerUrl.includes(".ogg")) return "audio/ogg";
   if (lowerUrl.includes(".m4a")) return "audio/mp4";
+  if (lowerUrl.includes(".webm")) return "audio/webm";
+  if (lowerUrl.includes(".flac")) return "audio/flac";
   return "audio/mpeg";
+}
+
+function resolveAudioDataUrl(value: string) {
+  const match = value.match(/^data:(audio\/[a-z0-9.+-]+);base64,([a-z0-9+/=]+)$/i);
+  if (!match) return null;
+
+  const mime = match[1].toLowerCase();
+  return {
+    buffer: Buffer.from(match[2], "base64"),
+    extension: audioExtension(mime)
+  };
+}
+
+function audioExtension(mime: string) {
+  if (mime.includes("wav")) return ".wav";
+  if (mime.includes("ogg")) return ".ogg";
+  if (mime.includes("mp4") || mime.includes("m4a")) return ".m4a";
+  if (mime.includes("webm")) return ".webm";
+  if (mime.includes("flac")) return ".flac";
+  return ".mp3";
 }
 
 function createMultimediaChoiceL10n() {
   return {
-    checkAnswerButtonText: "Check",
-    submitAnswerButtonText: "Submit",
-    checkAnswer: "Check the answers.",
-    showSolutionButtonText: "Show solution",
-    showSolution: "Show the solution.",
-    correctAnswer: "Correct answer",
-    wrongAnswer: "Wrong answer",
-    shouldCheck: "Should have been checked",
-    shouldNotCheck: "Should not have been checked",
-    noAnswer: "Please answer before viewing the solution",
-    retryText: "Retry",
-    retry: "Retry the task.",
-    result: "You got :num out of :total points",
+    checkAnswerButtonText: "Kiểm tra",
+    submitAnswerButtonText: "Gửi",
+    checkAnswer: "Kiểm tra đáp án.",
+    showSolutionButtonText: "Xem đáp án",
+    showSolution: "Xem đáp án đúng.",
+    correctAnswer: "Đáp án đúng",
+    wrongAnswer: "Đáp án sai",
+    shouldCheck: "Nên được chọn",
+    shouldNotCheck: "Không nên được chọn",
+    noAnswer: "Vui lòng trả lời trước khi xem đáp án",
+    retryText: "Thử lại",
+    retry: "Thử lại bài tập.",
+    result: "Bạn đạt :num trên :total điểm",
     confirmCheck: {
-      header: "Finish?",
-      body: "Are you sure you want to finish?",
-      cancelLabel: "Cancel",
-      confirmLabel: "Finish"
+      header: "Hoàn thành?",
+      body: "Bạn có chắc muốn hoàn thành?",
+      cancelLabel: "Hủy",
+      confirmLabel: "Hoàn thành"
     },
     confirmRetry: {
-      header: "Retry?",
-      body: "Are you sure you wish to retry?",
-      cancelLabel: "Cancel",
-      confirmLabel: "Retry"
+      header: "Thử lại?",
+      body: "Bạn có chắc muốn thử lại?",
+      cancelLabel: "Hủy",
+      confirmLabel: "Thử lại"
     },
-    missingAltText: "Alt text missing",
-    closeModalText: "Close modal"
+    missingAltText: "Thiếu mô tả hình ảnh",
+    closeModalText: "Đóng"
   };
 }
 
 function createAudioRecorderL10n() {
   return {
-    recordAnswer: "Record",
-    pause: "Pause",
-    continue: "Continue",
-    download: "Download",
-    done: "Done",
-    retry: "Retry",
-    microphoneNotSupported: "Microphone not supported. Make sure you are using a browser that allows microphone recording.",
-    microphoneInaccessible: "Microphone is not accessible. Make sure that the browser microphone is enabled.",
-    insecureNotAllowed: "Access to microphone is not allowed because this page is not served using HTTPS.",
-    statusReadyToRecord: "Press a button below to record your answer.",
-    statusRecording: "Recording...",
-    statusPaused: "Recording paused.",
-    statusFinishedRecording: "You have successfully recorded your answer! Listen to the recording below.",
-    downloadRecording: "Download this recording or retry.",
-    retryDialogHeaderText: "Retry recording?",
-    retryDialogBodyText: "By pressing Retry you will lose your current recording.",
-    retryDialogConfirmText: "Retry",
-    retryDialogCancelText: "Cancel",
-    statusCantCreateTheAudioFile: "Can't create the audio file."
+    recordAnswer: "Ghi âm",
+    pause: "Tạm dừng",
+    continue: "Tiếp tục",
+    download: "Tải xuống",
+    done: "Hoàn tất",
+    retry: "Thử lại",
+    microphoneNotSupported: "Trình duyệt không hỗ trợ micro. Hãy dùng trình duyệt cho phép ghi âm.",
+    microphoneInaccessible: "Không thể truy cập micro. Hãy bật quyền sử dụng micro trong trình duyệt.",
+    insecureNotAllowed: "Không thể sử dụng micro vì trang không dùng HTTPS.",
+    statusReadyToRecord: "Nhấn nút bên dưới để ghi âm câu trả lời.",
+    statusRecording: "Đang ghi âm...",
+    statusPaused: "Đã tạm dừng ghi âm.",
+    statusFinishedRecording: "Bạn đã ghi âm thành công! Nghe lại bên dưới.",
+    downloadRecording: "Tải bản ghi âm hoặc thử lại.",
+    retryDialogHeaderText: "Ghi âm lại?",
+    retryDialogBodyText: "Nhấn Thử lại sẽ xóa bản ghi âm hiện tại.",
+    retryDialogConfirmText: "Thử lại",
+    retryDialogCancelText: "Hủy",
+    statusCantCreateTheAudioFile: "Không thể tạo file âm thanh."
   };
 }
 

@@ -648,9 +648,51 @@ function AudioUrlInput({
   value: string;
   onChange: (value: string) => void;
 }) {
+  async function handleFileChange(event: ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    const dataUrl = await readFileAsDataUrl(file);
+    onChange(dataUrl);
+    event.target.value = "";
+  }
+
+  const isEmbeddedAudio = value.startsWith("data:audio/");
+
   return (
-    <div className="space-y-2">
-      <TextInput label={label} value={value} onChange={onChange} />
+    <div className="space-y-3">
+      <div className="space-y-2">
+        <label className="block text-sm font-medium text-ink">
+          {label}
+          <input
+            value={isEmbeddedAudio ? "Embedded audio file" : value}
+            readOnly={isEmbeddedAudio}
+            onChange={(event) => onChange(event.target.value)}
+            className="mt-2 h-10 w-full rounded-md border border-line px-3 text-sm outline-none focus:border-brand"
+          />
+        </label>
+        <div className="flex items-center gap-2">
+          <label className="inline-flex h-9 cursor-pointer items-center gap-2 rounded-md border border-line px-3 text-sm font-semibold text-ink hover:bg-panel">
+            <Upload size={15} aria-hidden="true" />
+            Choose file
+            <input
+              type="file"
+              accept="audio/*,.mp3,.wav,.ogg,.m4a,.webm,.flac"
+              onChange={handleFileChange}
+              className="sr-only"
+            />
+          </label>
+          {isEmbeddedAudio && (
+            <button
+              type="button"
+              onClick={() => onChange("")}
+              className="inline-flex h-9 items-center rounded-md border border-line px-3 text-sm font-semibold text-coral hover:bg-panel"
+            >
+              Clear
+            </button>
+          )}
+        </div>
+      </div>
       {value && (
         <audio controls src={value} className="h-10 w-full">
           <track kind="captions" />
@@ -658,6 +700,15 @@ function AudioUrlInput({
       )}
     </div>
   );
+}
+
+function readFileAsDataUrl(file: File) {
+  return new Promise<string>((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error("Failed to read audio file"));
+    reader.readAsDataURL(file);
+  });
 }
 
 function RecorderPreview() {

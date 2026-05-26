@@ -1,6 +1,6 @@
 import AdmZip from "adm-zip";
 import { randomUUID } from "node:crypto";
-import { mkdir, rm, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
@@ -30,9 +30,14 @@ export interface GeneratedPackage {
 
 export class H5PGenerator {
   private readonly tempRoot: string;
+  private readonly uploadsRoot: string;
 
-  constructor(tempRoot = process.env.VERCEL ? "/tmp/h5p-generator" : path.resolve(projectRoot, "temp")) {
+  constructor(
+    tempRoot = process.env.VERCEL ? "/tmp/h5p-generator" : path.resolve(projectRoot, "temp"),
+    uploadsRoot = process.env.VERCEL ? "/tmp/h5p-uploads" : path.resolve(projectRoot, "uploads")
+  ) {
     this.tempRoot = tempRoot;
+    this.uploadsRoot = uploadsRoot;
   }
 
   async generate(input: GenerateH5PRequest): Promise<GeneratedPackage> {
@@ -49,6 +54,8 @@ export class H5PGenerator {
     await mkdir(outputDir, { recursive: true });
 
     try {
+      await this.embedAudioFiles(input.interactions, contentDir);
+
       await writeJson(path.join(packageDir, "h5p.json"), this.createManifest(input.title));
       await writeJson(path.join(contentDir, "content.json"), this.createContent(input));
 
@@ -92,6 +99,97 @@ export class H5PGenerator {
         { machineName: "FontAwesome", majorVersion: 4, minorVersion: 5 }
       ]
     };
+  }
+
+  /**
+   * Copy uploaded audio or inline audio data into content/audios and rewrite
+   * interaction URLs so the generated package is self-contained.
+   */
+  private async embedAudioFiles(interactions: Interaction[], contentDir: string) {
+    const audioDir = path.join(contentDir, "audios");
+    let audioDirCreated = false;
+
+    for (const interaction of interactions) {
+      const urls = this.extractAudioUrls(interaction);
+      for (const urlInfo of urls) {
+        const inlineAudio = resolveAudioDataUrl(urlInfo.url);
+
+        if (inlineAudio) {
+          if (!audioDirCreated) {
+            await mkdir(audioDir, { recursive: true });
+            audioDirCreated = true;
+          }
+
+          const filename = `${uuidv4()}${inlineAudio.extension}`;
+          await writeFile(path.join(audioDir, filename), inlineAudio.buffer);
+          urlInfo.rewrite(`audios/${filename}`);
+          continue;
+        }
+
+        const filename = this.resolveUploadedFile(urlInfo.url);
+        if (!filename) continue;
+
+        const sourcePath = path.join(this.uploadsRoot, filename);
+        try {
+          await access(sourcePath);
+        } catch {
+          continue;
+        }
+
+        if (!audioDirCreated) {
+          await mkdir(audioDir, { recursive: true });
+          audioDirCreated = true;
+        }
+
+        const destPath = path.join(audioDir, filename);
+        await copyFile(sourcePath, destPath);
+
+        // Rewrite the URL to the relative path inside the H5P package
+        urlInfo.rewrite(`audios/${filename}`);
+      }
+    }
+  }
+
+  private extractAudioUrls(interaction: Interaction): Array<{ url: string; rewrite: (newUrl: string) => void }> {
+    const results: Array<{ url: string; rewrite: (newUrl: string) => void }> = [];
+
+    if (interaction.type === "listen-choice") {
+      const content = interaction.content as ListenChoiceContent;
+      if (content.promptAudioUrl) {
+        results.push({
+          url: content.promptAudioUrl,
+          rewrite: (u) => { content.promptAudioUrl = u; }
+        });
+      }
+      for (const option of content.options) {
+        if (option.audioUrl) {
+          results.push({
+            url: option.audioUrl,
+            rewrite: (u) => { option.audioUrl = u; }
+          });
+        }
+      }
+    }
+
+    return results;
+  }
+
+  /**
+   * If the URL points to one of our uploaded files, return just the filename.
+   * Handles both full URLs (http://host/uploads/xyz.mp3) and bare filenames.
+   */
+  private resolveUploadedFile(url: string): string | null {
+    // /uploads/filename.mp3 or http://host/uploads/filename.mp3
+    const uploadsMatch = url.match(/\/uploads\/([^/?#]+)/);
+    if (uploadsMatch) {
+      const filename = decodeURIComponent(uploadsMatch[1]);
+      return isUploadedAudioFileName(filename) ? filename : null;
+    }
+
+    // Bare filename that exists in uploads dir
+    if (isUploadedAudioFileName(url)) return url;
+
+    return null;
   }
 
   private createContent(input: GenerateH5PRequest) {
@@ -346,65 +444,97 @@ function createAudioContent(audioUrl: string, title: string) {
 
 function audioMimeType(audioUrl: string) {
   const lowerUrl = audioUrl.toLowerCase();
+  if (lowerUrl.startsWith("data:audio/wav")) return "audio/wav";
+  if (lowerUrl.startsWith("data:audio/ogg")) return "audio/ogg";
+  if (lowerUrl.startsWith("data:audio/mp4") || lowerUrl.startsWith("data:audio/m4a")) return "audio/mp4";
+  if (lowerUrl.startsWith("data:audio/webm")) return "audio/webm";
+  if (lowerUrl.startsWith("data:audio/flac")) return "audio/flac";
+  if (lowerUrl.startsWith("data:audio/mpeg") || lowerUrl.startsWith("data:audio/mp3")) return "audio/mpeg";
   if (lowerUrl.includes(".wav")) return "audio/wav";
   if (lowerUrl.includes(".ogg")) return "audio/ogg";
   if (lowerUrl.includes(".m4a")) return "audio/mp4";
+  if (lowerUrl.includes(".webm")) return "audio/webm";
+  if (lowerUrl.includes(".flac")) return "audio/flac";
   return "audio/mpeg";
+}
+
+function resolveAudioDataUrl(value: string) {
+  const match = value.match(/^data:(audio\/[a-z0-9.+-]+);base64,([a-z0-9+/=]+)$/i);
+  if (!match) return null;
+
+  const mime = match[1].toLowerCase();
+  return {
+    buffer: Buffer.from(match[2], "base64"),
+    extension: audioExtension(mime)
+  };
+}
+
+function audioExtension(mime: string) {
+  if (mime.includes("wav")) return ".wav";
+  if (mime.includes("ogg")) return ".ogg";
+  if (mime.includes("mp4") || mime.includes("m4a")) return ".m4a";
+  if (mime.includes("webm")) return ".webm";
+  if (mime.includes("flac")) return ".flac";
+  return ".mp3";
+}
+
+function isUploadedAudioFileName(value: string) {
+  return /^[a-f0-9-]+\.(mp3|wav|ogg|m4a|webm|flac)$/i.test(value);
 }
 
 function createMultimediaChoiceL10n() {
   return {
-    checkAnswerButtonText: "Check",
-    submitAnswerButtonText: "Submit",
-    checkAnswer: "Check the answers.",
-    showSolutionButtonText: "Show solution",
-    showSolution: "Show the solution.",
-    correctAnswer: "Correct answer",
-    wrongAnswer: "Wrong answer",
-    shouldCheck: "Should have been checked",
-    shouldNotCheck: "Should not have been checked",
-    noAnswer: "Please answer before viewing the solution",
-    retryText: "Retry",
-    retry: "Retry the task.",
-    result: "You got :num out of :total points",
+    checkAnswerButtonText: "Kiểm tra",
+    submitAnswerButtonText: "Gửi",
+    checkAnswer: "Kiểm tra đáp án.",
+    showSolutionButtonText: "Xem đáp án",
+    showSolution: "Xem đáp án đúng.",
+    correctAnswer: "Đáp án đúng",
+    wrongAnswer: "Đáp án sai",
+    shouldCheck: "Nên được chọn",
+    shouldNotCheck: "Không nên được chọn",
+    noAnswer: "Vui lòng trả lời trước khi xem đáp án",
+    retryText: "Thử lại",
+    retry: "Thử lại bài tập.",
+    result: "Bạn đạt :num trên :total điểm",
     confirmCheck: {
-      header: "Finish?",
-      body: "Are you sure you want to finish?",
-      cancelLabel: "Cancel",
-      confirmLabel: "Finish"
+      header: "Hoàn thành?",
+      body: "Bạn có chắc muốn hoàn thành?",
+      cancelLabel: "Hủy",
+      confirmLabel: "Hoàn thành"
     },
     confirmRetry: {
-      header: "Retry?",
-      body: "Are you sure you wish to retry?",
-      cancelLabel: "Cancel",
-      confirmLabel: "Retry"
+      header: "Thử lại?",
+      body: "Bạn có chắc muốn thử lại?",
+      cancelLabel: "Hủy",
+      confirmLabel: "Thử lại"
     },
-    missingAltText: "Alt text missing",
-    closeModalText: "Close modal"
+    missingAltText: "Thiếu mô tả hình ảnh",
+    closeModalText: "Đóng"
   };
 }
 
 function createAudioRecorderL10n() {
   return {
-    recordAnswer: "Record",
-    pause: "Pause",
-    continue: "Continue",
-    download: "Download",
-    done: "Done",
-    retry: "Retry",
-    microphoneNotSupported: "Microphone not supported. Make sure you are using a browser that allows microphone recording.",
-    microphoneInaccessible: "Microphone is not accessible. Make sure that the browser microphone is enabled.",
-    insecureNotAllowed: "Access to microphone is not allowed because this page is not served using HTTPS.",
-    statusReadyToRecord: "Press a button below to record your answer.",
-    statusRecording: "Recording...",
-    statusPaused: "Recording paused.",
-    statusFinishedRecording: "You have successfully recorded your answer! Listen to the recording below.",
-    downloadRecording: "Download this recording or retry.",
-    retryDialogHeaderText: "Retry recording?",
-    retryDialogBodyText: "By pressing Retry you will lose your current recording.",
-    retryDialogConfirmText: "Retry",
-    retryDialogCancelText: "Cancel",
-    statusCantCreateTheAudioFile: "Can't create the audio file."
+    recordAnswer: "Ghi âm",
+    pause: "Tạm dừng",
+    continue: "Tiếp tục",
+    download: "Tải xuống",
+    done: "Hoàn tất",
+    retry: "Thử lại",
+    microphoneNotSupported: "Trình duyệt không hỗ trợ micro. Hãy dùng trình duyệt cho phép ghi âm.",
+    microphoneInaccessible: "Không thể truy cập micro. Hãy bật quyền sử dụng micro trong trình duyệt.",
+    insecureNotAllowed: "Không thể sử dụng micro vì trang không dùng HTTPS.",
+    statusReadyToRecord: "Nhấn nút bên dưới để ghi âm câu trả lời.",
+    statusRecording: "Đang ghi âm...",
+    statusPaused: "Đã tạm dừng ghi âm.",
+    statusFinishedRecording: "Bạn đã ghi âm thành công! Nghe lại bên dưới.",
+    downloadRecording: "Tải bản ghi âm hoặc thử lại.",
+    retryDialogHeaderText: "Ghi âm lại?",
+    retryDialogBodyText: "Nhấn Thử lại sẽ xóa bản ghi âm hiện tại.",
+    retryDialogConfirmText: "Thử lại",
+    retryDialogCancelText: "Hủy",
+    statusCantCreateTheAudioFile: "Không thể tạo file âm thanh."
   };
 }
 

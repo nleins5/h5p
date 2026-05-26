@@ -1,7 +1,9 @@
 import cors from "cors";
 import express from "express";
-import { rm } from "node:fs/promises";
+import multer from "multer";
+import { mkdir, rm } from "node:fs/promises";
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { H5PGenerator } from "./h5pGenerator.js";
 import type { GenerateH5PRequest } from "./types.js";
@@ -13,7 +15,32 @@ const projectRoot = path.resolve(__dirname, "..");
 const port = Number(process.env.PORT ?? 4000);
 const app = express();
 const tempRoot = process.env.VERCEL ? "/tmp/h5p-generator" : path.resolve(projectRoot, "temp");
-const generator = new H5PGenerator(tempRoot);
+const uploadsRoot = process.env.VERCEL ? "/tmp/h5p-uploads" : path.resolve(projectRoot, "uploads");
+const generator = new H5PGenerator(tempRoot, uploadsRoot);
+
+const AUDIO_EXTENSIONS = new Set([".mp3", ".wav", ".ogg", ".m4a", ".webm", ".flac"]);
+
+const upload = multer({
+  storage: multer.diskStorage({
+    destination: async (_req, _file, cb) => {
+      await mkdir(uploadsRoot, { recursive: true });
+      cb(null, uploadsRoot);
+    },
+    filename: (_req, file, cb) => {
+      const ext = path.extname(file.originalname).toLowerCase() || ".mp3";
+      cb(null, `${randomUUID()}${ext}`);
+    }
+  }),
+  limits: { fileSize: 10 * 1024 * 1024 },
+  fileFilter: (_req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (AUDIO_EXTENSIONS.has(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`Unsupported audio format: ${ext}`));
+    }
+  }
+});
 const allowedOrigins = [
   process.env.FRONTEND_ORIGIN,
   "http://localhost:3000",
@@ -32,8 +59,9 @@ app.use(
     }
   })
 );
-app.use(express.json({ limit: "2mb" }));
+app.use(express.json({ limit: "25mb" }));
 app.use("/downloads", express.static(path.resolve(tempRoot, "outputs")));
+app.use("/uploads", express.static(uploadsRoot));
 
 app.get("/", (_req, res) => {
   res.type("html").send(`<!doctype html>
@@ -107,6 +135,24 @@ app.get("/", (_req, res) => {
 
 app.get("/health", (_req, res) => {
   res.json({ ok: true });
+});
+
+app.post("/api/upload-audio", upload.single("audio"), (req, res) => {
+  if (!req.file) {
+    res.status(400).json({ error: "No audio file provided" });
+    return;
+  }
+
+  const protocol = String(req.get("x-forwarded-proto") ?? req.protocol).split(",")[0];
+  const host = req.get("host") ?? `localhost:${port}`;
+  const audioUrl = `${protocol}://${host}/uploads/${req.file.filename}`;
+
+  res.status(201).json({
+    filename: req.file.filename,
+    audioUrl,
+    size: req.file.size,
+    mime: req.file.mimetype
+  });
 });
 
 app.post("/api/generate-h5p", async (req, res, next) => {
