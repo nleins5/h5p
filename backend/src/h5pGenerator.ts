@@ -56,7 +56,7 @@ export class H5PGenerator {
     try {
       await this.embedAudioFiles(input.interactions, contentDir);
 
-      await writeJson(path.join(packageDir, "h5p.json"), this.createManifest(input.title));
+      await writeJson(path.join(packageDir, "h5p.json"), this.createManifest(input.title, input.interactions));
       await writeJson(path.join(contentDir, "content.json"), this.createContent(input));
 
       const zip = new AdmZip();
@@ -74,31 +74,62 @@ export class H5PGenerator {
     };
   }
 
-  private createManifest(title: string) {
+  private createManifest(title: string, interactions: Interaction[]) {
     return {
       title,
       language: "en",
       mainLibrary: "H5P.InteractiveVideo",
       embedTypes: ["div"],
       license: "U",
-      preloadedDependencies: [
-        { machineName: "H5P.InteractiveVideo", majorVersion: 1, minorVersion: 26 },
-        { machineName: "H5P.Text", majorVersion: 1, minorVersion: 1 },
-        { machineName: "H5P.MultiChoice", majorVersion: 1, minorVersion: 16 },
-        { machineName: "H5P.Image", majorVersion: 1, minorVersion: 1 },
-        { machineName: "H5P.Link", majorVersion: 1, minorVersion: 3 },
-        { machineName: "H5P.Blanks", majorVersion: 1, minorVersion: 14 },
-        { machineName: "H5P.MultiMediaChoice", majorVersion: 0, minorVersion: 3 },
-        { machineName: "H5P.Audio", majorVersion: 1, minorVersion: 5 },
-        { machineName: "H5P.AudioRecorder", majorVersion: 1, minorVersion: 0 },
-        { machineName: "H5P.Question", majorVersion: 1, minorVersion: 5 },
-        { machineName: "H5P.JoubelUI", majorVersion: 1, minorVersion: 3 },
-        { machineName: "H5P.MaterialDesignIcons", majorVersion: 1, minorVersion: 0 },
-        { machineName: "H5P.Components", majorVersion: 1, minorVersion: 0 },
-        { machineName: "H5P.FontIcons", majorVersion: 1, minorVersion: 0 },
-        { machineName: "FontAwesome", majorVersion: 4, minorVersion: 5 }
-      ]
+      preloadedDependencies: this.createDependencies(interactions)
     };
+  }
+
+  private createDependencies(interactions: Interaction[]) {
+    const dependencies = new Map<string, { machineName: string; majorVersion: number; minorVersion: number }>();
+    const add = (machineName: string, majorVersion: number, minorVersion: number) => {
+      dependencies.set(machineName, { machineName, majorVersion, minorVersion });
+    };
+
+    add("H5P.InteractiveVideo", 1, 26);
+
+    for (const interaction of interactions) {
+      switch (interaction.type) {
+        case "text":
+        case "bookmark":
+          add("H5P.Text", 1, 1);
+          break;
+        case "multiple-choice":
+          add("H5P.MultiChoice", 1, 16);
+          add("H5P.Question", 1, 5);
+          add("H5P.JoubelUI", 1, 3);
+          break;
+        case "image":
+          add("H5P.Image", 1, 1);
+          break;
+        case "link":
+        case "jump-to-time":
+          add("H5P.Link", 1, 3);
+          break;
+        case "fill-blank":
+          add("H5P.Blanks", 1, 14);
+          add("H5P.Question", 1, 5);
+          add("H5P.JoubelUI", 1, 3);
+          break;
+        case "listen-choice":
+          add("H5P.MultiMediaChoice", 0, 3);
+          add("H5P.Audio", 1, 5);
+          add("H5P.Question", 1, 5);
+          add("H5P.JoubelUI", 1, 3);
+          add("H5P.MaterialDesignIcons", 1, 0);
+          break;
+        case "read-aloud":
+          add("H5P.AudioRecorder", 1, 0);
+          break;
+      }
+    }
+
+    return Array.from(dependencies.values());
   }
 
   /**
