@@ -1,6 +1,6 @@
 import AdmZip from "adm-zip";
 import { randomUUID } from "node:crypto";
-import { access, copyFile, mkdir, rm, writeFile } from "node:fs/promises";
+import { access, copyFile, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
@@ -60,7 +60,7 @@ export class H5PGenerator {
       await writeJson(path.join(contentDir, "content.json"), this.createContent(input));
 
       const zip = new AdmZip();
-      zip.addLocalFolder(packageDir);
+      await addFilesToZip(zip, packageDir);
       zip.writeZip(filePath);
     } finally {
       await rm(workDir, { recursive: true, force: true });
@@ -544,6 +544,24 @@ function uuidv4() {
 
 function writeJson(filePath: string, value: unknown) {
   return writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+}
+
+async function addFilesToZip(zip: AdmZip, sourceDir: string, currentDir = sourceDir) {
+  const entries = await readdir(currentDir, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const fullPath = path.join(currentDir, entry.name);
+
+    if (entry.isDirectory()) {
+      await addFilesToZip(zip, sourceDir, fullPath);
+      continue;
+    }
+
+    if (!entry.isFile()) continue;
+
+    const zipPath = path.relative(sourceDir, fullPath).split(path.sep).join("/");
+    zip.addLocalFile(fullPath, path.posix.dirname(zipPath) === "." ? "" : path.posix.dirname(zipPath));
+  }
 }
 
 function slugify(value: string) {
